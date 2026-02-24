@@ -4,7 +4,8 @@ import fi.iki.elonen.NanoHTTPD
 import org.json.JSONObject
 
 class CastServer(
-    private val onUrlReceived: (String) -> Unit
+    private val onUrlReceived: (String) -> Unit,
+    private val onControlAction: (String) -> Pair<Boolean, String>
 ) : NanoHTTPD(PORT) {
 
     override fun serve(session: IHTTPSession): Response {
@@ -25,6 +26,28 @@ class CastServer(
                     } else {
                         onUrlReceived(url)
                         newFixedLengthResponse(Response.Status.OK, "text/plain", "received")
+                    }
+                } catch (e: Exception) {
+                    newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", e.message ?: "error")
+                }
+            }
+
+            session.method == Method.POST && session.uri == "/control" -> {
+                val files = HashMap<String, String>()
+                return try {
+                    session.parseBody(files)
+                    val rawBody = files["postData"].orEmpty()
+                    val json = JSONObject(rawBody)
+                    val action = json.optString("action", "")
+                    if (action.isBlank()) {
+                        newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "missing action")
+                    } else {
+                        val (ok, msg) = onControlAction(action)
+                        if (ok) {
+                            newFixedLengthResponse(Response.Status.OK, "text/plain", msg)
+                        } else {
+                            newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", msg)
+                        }
                     }
                 } catch (e: Exception) {
                     newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", e.message ?: "error")

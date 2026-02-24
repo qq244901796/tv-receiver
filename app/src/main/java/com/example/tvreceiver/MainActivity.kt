@@ -20,6 +20,8 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
@@ -91,12 +93,24 @@ class MainActivity : AppCompatActivity() {
         fullscreenButton.setOnClickListener { toggleFullscreen() }
 
         servicePublisher = ServicePublisher(this)
-        castServer = CastServer { url ->
-            runOnUiThread {
-                statusText.text = "收到视频链接: $url"
-                playUrl(url)
+        castServer = CastServer(
+            onUrlReceived = { url ->
+                runOnUiThread {
+                    statusText.text = "收到视频链接: $url"
+                    playUrl(url)
+                }
+            },
+            onControlAction = { action ->
+                val latch = CountDownLatch(1)
+                var result: Pair<Boolean, String> = false to "control timeout"
+                runOnUiThread {
+                    result = handleRemoteControl(action)
+                    latch.countDown()
+                }
+                latch.await(1200, TimeUnit.MILLISECONDS)
+                result
             }
-        }
+        )
 
         castServer.start()
         servicePublisher.register(CastServer.PORT)
@@ -118,12 +132,12 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     KeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                        pausePlayback()
+                        pausePlayback(showToast = true)
                         return true
                     }
 
                     KeyEvent.KEYCODE_MEDIA_PLAY -> {
-                        resumePlayback()
+                        resumePlayback(showToast = true)
                         return true
                     }
 
@@ -235,24 +249,46 @@ class MainActivity : AppCompatActivity() {
     private fun togglePlayPause() {
         if (player.currentMediaItem == null) return
         if (player.isPlaying) {
-            pausePlayback()
+            pausePlayback(showToast = true)
         } else {
-            resumePlayback()
+            resumePlayback(showToast = true)
         }
     }
 
-    private fun pausePlayback() {
-        if (player.currentMediaItem == null) return
+    private fun pausePlayback(showToast: Boolean): Boolean {
+        if (player.currentMediaItem == null) return false
         player.pause()
         updateStatus("已暂停")
-        Toast.makeText(this, "已暂停", Toast.LENGTH_SHORT).show()
+        if (showToast) Toast.makeText(this, "已暂停", Toast.LENGTH_SHORT).show()
+        return true
     }
 
-    private fun resumePlayback() {
-        if (player.currentMediaItem == null) return
+    private fun resumePlayback(showToast: Boolean): Boolean {
+        if (player.currentMediaItem == null) return false
         player.playWhenReady = true
         updateStatus("播放中")
-        Toast.makeText(this, "继续播放", Toast.LENGTH_SHORT).show()
+        if (showToast) Toast.makeText(this, "继续播放", Toast.LENGTH_SHORT).show()
+        return true
+    }
+
+    private fun stopPlaybackToWaiting(showToast: Boolean): Boolean {
+        if (player.currentMediaItem == null) return false
+        player.stop()
+        player.clearMediaItems()
+        stopLongSeek()
+        statusText.text = "已停止播放，等待手机发送..."
+        updateProgressText()
+        if (showToast) Toast.makeText(this, "已返回到等待状态", Toast.LENGTH_SHORT).show()
+        return true
+    }
+
+    private fun handleRemoteControl(action: String): Pair<Boolean, String> {
+        return when (action.lowercase(Locale.US)) {
+            "play" -> if (resumePlayback(showToast = false)) true to "play ok" else false to "no media"
+            "pause" -> if (pausePlayback(showToast = false)) true to "pause ok" else false to "no media"
+            "stop" -> if (stopPlaybackToWaiting(showToast = false)) true to "stop ok" else false to "no media"
+            else -> false to "unsupported action"
+        }
     }
 
     private fun seekBy(deltaMs: Long) {
@@ -303,12 +339,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (player.currentMediaItem != null) {
-            player.stop()
-            player.clearMediaItems()
-            stopLongSeek()
-            statusText.text = "已停止播放，等待手机发送..."
-            updateProgressText()
-            Toast.makeText(this, "已返回到等待状态", Toast.LENGTH_SHORT).show()
+            stopPlaybackToWaiting(showToast = true)
         } else {
             finish()
         }
