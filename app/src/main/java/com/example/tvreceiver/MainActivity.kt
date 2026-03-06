@@ -112,9 +112,27 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        castServer.start()
-        servicePublisher.register(CastServer.PORT)
-        statusText.text = "服务已启动，等待手机发送..."
+        var serverStarted = false
+        val startupErrors = mutableListOf<String>()
+
+        runCatching {
+            castServer.start()
+            serverStarted = true
+        }.onFailure {
+            startupErrors += "HTTP 服务启动失败: ${it.message ?: it.javaClass.simpleName}"
+        }
+
+        runCatching {
+            servicePublisher.register(CastServer.PORT)
+        }.onFailure {
+            startupErrors += "局域网广播失败: ${it.message ?: it.javaClass.simpleName}"
+        }
+
+        statusText.text = when {
+            startupErrors.isEmpty() -> "服务已启动，等待手机发送..."
+            serverStarted -> startupErrors.joinToString(" | ", prefix = "部分功能异常: ")
+            else -> startupErrors.joinToString(" | ", prefix = "启动异常: ")
+        }
         updateProgressText()
         uiHandler.post(progressTicker)
     }
